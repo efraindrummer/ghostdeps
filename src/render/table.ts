@@ -1,6 +1,6 @@
 import chalk, { type ChalkInstance } from 'chalk';
 import Table from 'cli-table3';
-import { CATEGORY_LABELS, THRESHOLDS } from '../scoring/scoring.js';
+import { CATEGORY_LABELS, THRESHOLDS, type Thresholds } from '../scoring/scoring.js';
 import type { HealthCategory, PackageReport, Summary } from '../types.js';
 import { daysSince } from '../utils.js';
 
@@ -49,9 +49,8 @@ export function renderTable(reports: PackageReport[], now: Date): string {
 
   for (const r of reports) {
     const days = r.github ? daysSince(r.github.lastCommitAt, now) : null;
-    const name = r.kind === 'devDependencies' ? `${r.name} ${chalk.gray('(dev)')}` : r.name;
     table.push([
-      name,
+      nameCell(r),
       scoreCell(r),
       days === null ? chalk.gray('—') : String(days),
       maintainersCell(r),
@@ -59,6 +58,15 @@ export function renderTable(reports: PackageReport[], now: Date): string {
     ]);
   }
   return table.toString();
+}
+
+/** Nombre del paquete con marca de dev o la ruta por la que llega si es transitiva. */
+export function nameCell(r: PackageReport): string {
+  if (r.kind === 'devDependencies') return `${r.name} ${chalk.gray('(dev)')}`;
+  if (r.kind === 'transitive') {
+    return `${r.name}\n${chalk.gray(truncate(`↳ ${r.via.join(' › ')}`, 40))}`;
+  }
+  return r.name;
 }
 
 /** Desglose explicable de penalizaciones (flag --explain). */
@@ -75,11 +83,11 @@ export function renderExplain(reports: PackageReport[]): string {
   return lines.join('\n');
 }
 
-export function renderSummary(s: Summary): string {
+export function renderSummary(s: Summary, t: Thresholds = THRESHOLDS): string {
   const parts = [
-    chalk.red(`● Crítico/Fantasma (<${THRESHOLDS.caution}): ${s.critical}`),
-    chalk.yellow(`● Precaución (${THRESHOLDS.caution}-${THRESHOLDS.healthy - 1}): ${s.caution}`),
-    chalk.green(`● Saludable (≥${THRESHOLDS.healthy}): ${s.healthy}`),
+    chalk.red(`● Crítico/Fantasma (<${t.caution}): ${s.critical}`),
+    chalk.yellow(`● Precaución (${t.caution}-${t.healthy - 1}): ${s.caution}`),
+    chalk.green(`● Saludable (≥${t.healthy}): ${s.healthy}`),
     chalk.gray(`○ No evaluable: ${s.notEvaluable}`),
   ];
   if (s.errors > 0) parts.push(chalk.red.bold(`✖ Errores: ${s.errors}`));

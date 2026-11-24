@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/ghostdeps/schema/ghostdepsrc.schema.json",
+  "ignore": ["@types/*", "my-internal-*"],
+  "failUnder": 40,
+  "dev": true,
+  "transitive": true,
+  "depth": 3,
+  "thresholds": { "healthy": 75, "caution": 45 },
+  "weights": {
+    "archived": 50,
+    "busFactor": { "one": 10 },
+    "abandonment": [
+      { "threshold": 1095, "points": 50 },
+      { "threshold": 365, "points": 25 }
+    ]
+  }
+}

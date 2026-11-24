@@ -5,6 +5,7 @@
 
 export type ErrorCode =
   | 'MANIFEST_ERROR'
+  | 'CONFIG_ERROR'
   | 'NETWORK_ERROR'
   | 'TIMEOUT'
   | 'HTTP_ERROR'
@@ -24,6 +25,12 @@ export class GhostDepsError extends Error {
 export class ManifestError extends GhostDepsError {
   constructor(message: string, options?: { cause?: unknown }) {
     super('MANIFEST_ERROR', message, options);
+  }
+}
+
+export class ConfigError extends GhostDepsError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super('CONFIG_ERROR', message, options);
   }
 }
 

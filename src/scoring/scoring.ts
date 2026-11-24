@@ -58,10 +58,15 @@ export const DEFAULT_WEIGHTS: ScoringWeights = Object.freeze({
   dormantRevivalDays: 365,
 });
 
-export const THRESHOLDS = Object.freeze({
+export interface Thresholds {
   /** score >= healthy => Verde */
-  healthy: 70,
+  healthy: number;
   /** score >= caution => Amarillo; por debajo => Rojo */
+  caution: number;
+}
+
+export const THRESHOLDS: Readonly<Thresholds> = Object.freeze({
+  healthy: 70,
   caution: 40,
 });
 
@@ -85,9 +90,9 @@ const PRIORITY: readonly PenaltyId[] = [
   'stale-publish',
 ];
 
-export function categorize(score: number): HealthCategory {
-  if (score >= THRESHOLDS.healthy) return 'healthy';
-  if (score >= THRESHOLDS.caution) return 'caution';
+export function categorize(score: number, t: Thresholds = THRESHOLDS): HealthCategory {
+  if (score >= t.healthy) return 'healthy';
+  if (score >= t.caution) return 'caution';
   return 'critical';
 }
 
@@ -95,7 +100,11 @@ function months(days: number): number {
   return Math.floor(days / 30);
 }
 
-export function computeScore(s: HealthSignals, w: ScoringWeights = DEFAULT_WEIGHTS): ScoreResult {
+export function computeScore(
+  s: HealthSignals,
+  w: ScoringWeights = DEFAULT_WEIGHTS,
+  t: Thresholds = THRESHOLDS,
+): ScoreResult {
   const penalties: Penalty[] = [];
   const add = (id: PenaltyId, points: number, message: string) => {
     if (points > 0) penalties.push({ id, points, message });
@@ -152,7 +161,7 @@ export function computeScore(s: HealthSignals, w: ScoringWeights = DEFAULT_WEIGH
 
   return {
     score,
-    category: categorize(score),
+    category: categorize(score, t),
     penalties: sorted,
     mainAlert: sorted[0] ?? null,
   };

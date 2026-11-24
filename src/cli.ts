@@ -1,18 +1,28 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 import chalk from 'chalk';
-import { Command, CommanderError, InvalidArgumentError } from 'commander';
+import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { analyzeAll, sortReports, summarize } from './analyzer.js';
 import { DiskCache, defaultCacheDir } from './clients/cache.js';
 import { GitHubClient } from './clients/github.js';
 import { RateLimitGate } from './clients/http.js';
 import { NpmClient } from './clients/npm.js';
+import { createIgnoreMatcher, loadConfig } from './config.js';
 import { GhostDepsError, errorMessage } from './errors.js';
+import { readLockfile, resolveTransitive } from './parser/lockfile.js';
 import { readManifest } from './parser/manifest.js';
+import { renderMarkdown } from './render/markdown.js';
+import { renderSarif } from './render/sarif.js';
 import { renderExplain, renderSummary, renderTable } from './render/table.js';
+import type { DependencySpec } from './types.js';
 
 /** Códigos de salida documentados. */
 export const EXIT = { OK: 0, FAIL_UNDER: 1, FATAL: 2 } as const;
+
+type OutputFormat = 'table' | 'json' | 'markdown' | 'sarif';
 
 function readVersion(): string {
   try {
@@ -39,10 +49,21 @@ function scoreArg(value: string): number {
   return n;
 }
 
+/** `--ignore a,b --ignore "@types/*"` => ["a", "b", "@types/*"] */
+function collectList(value: string, previous: string[] = []): string[] {
+  return [...previous, ...value.split(',').map((s) => s.trim()).filter(Boolean)];
+}
+
 interface CliOptions {
   path: string;
+  config?: string;
   dev: boolean;
+  transitive: boolean;
+  depth?: number;
+  ignore: string[];
   json: boolean;
+  format: OutputFormat;
+  output?: string;
   failUnder?: number;
   concurrency: number;
   cache: boolean;
@@ -54,7 +75,20 @@ interface CliOptions {
 
 const log = (msg: string) => process.stderr.write(`${msg}\n`);
 
-async function run(opts: CliOptions, version: string): Promise<number> {
+async function run(opts: CliOptions, command: Command, version: string): Promise<number> {
+  const fromCli = (key: keyof CliOptions) => command.getOptionValueSource(key) === 'cli';
+  const format: OutputFormat = opts.json ? 'json' : opts.format;
+  const quiet = format !== 'table'; // en json/markdown, stderr solo para avisos importantes
+
+  // --- Configuración efectiva: CLI > archivo > defaults ---
+  const config = await loadConfig(opts.path, opts.config);
+  const dev = fromCli('dev') ? opts.dev : (config.dev ?? opts.dev);
+  const transitive = fromCli('transitive') ? opts.transitive : (config.transitive ?? opts.transitive);
+  const depth = opts.depth ?? config.depth;
+  const concurrency = fromCli('concurrency') ? opts.concurrency : (config.concurrency ?? opts.concurrency);
+  const failUnder = opts.failUnder ?? config.failUnder;
+  const isIgnored = createIgnoreMatcher([...config.ignore, ...opts.ignore]);
+
   const token = process.env.GITHUB_TOKEN?.trim() || process.env.GH_TOKEN?.trim() || undefined;
   if (!token) {
     log(
@@ -64,12 +98,25 @@ async function run(opts: CliOptions, version: string): Promise<number> {
       ),
     );
   }
+  if (config.source && !quiet) log(chalk.gray(`Configuración: ${config.source}`));
 
-  const manifest = await readManifest(opts.path, { includeDev: opts.dev });
-  if (manifest.dependencies.length === 0) {
-    if (opts.json) process.stdout.write(`${JSON.stringify({ packages: [], summary: summarize([]) }, null, 2)}\n`);
-    else log(chalk.green(`No hay dependencias que analizar en ${manifest.manifestPath}.`));
-    return EXIT.OK;
+  // --- Dependencias a analizar ---
+  const manifest = await readManifest(opts.path, { includeDev: dev });
+  let all: DependencySpec[] = manifest.dependencies;
+  if (transitive) {
+    const { file, lock } = await readLockfile(opts.path);
+    const trans = resolveTransitive(lock, manifest.dependencies, { maxDepth: depth ?? Number.POSITIVE_INFINITY });
+    all = [...manifest.dependencies, ...trans];
+    if (!quiet) log(chalk.gray(`Transitivas: ${trans.length} desde ${path.basename(file)}${depth ? ` (profundidad ≤ ${depth})` : ''}`));
+  }
+  const ignored = all.filter((d) => isIgnored(d.name) || isIgnored(d.registryName)).map((d) => d.name);
+  const toAnalyze = all.filter((d) => !ignored.includes(d.name));
+  if (ignored.length > 0 && !quiet) log(chalk.gray(`Ignorados: ${ignored.join(', ')}`));
+
+  if (toAnalyze.length > 15 && !token) {
+    log(chalk.yellow(`⚠ ${toAnalyze.length} paquetes a analizar sin token: es muy probable agotar el rate limit.`));
+  } else if (toAnalyze.length > 300) {
+    log(chalk.yellow(`⚠ ${toAnalyze.length} paquetes: ~${toAnalyze.length * 3} peticiones a GitHub. Considera --depth o "ignore".`));
   }
 
   const userAgent = `ghostdeps/${version} (+https://github.com/ghostdeps/ghostdeps)`;
@@ -92,38 +139,75 @@ async function run(opts: CliOptions, version: string): Promise<number> {
     now: () => now,
   });
 
-  const interactive = !opts.json && process.stderr.isTTY;
-  const reports = await analyzeAll(manifest.dependencies, { npm, github, now }, opts.concurrency, (done, total, name) => {
-    if (interactive) process.stderr.write(`\r\x1b[2K${chalk.gray(`Analizando ${done}/${total}: ${name}`)}`);
-  });
+  const interactive = !quiet && process.stderr.isTTY;
+  const reports = await analyzeAll(
+    toAnalyze,
+    { npm, github, now, weights: config.weights, thresholds: config.thresholds },
+    concurrency,
+    (done, total, name) => {
+      if (interactive) process.stderr.write(`\r\x1b[2K${chalk.gray(`Analizando ${done}/${total}: ${name}`)}`);
+    },
+  );
   if (interactive) process.stderr.write('\r\x1b[2K');
 
   const sorted = sortReports(reports);
   const summary = summarize(sorted);
-
   const failing =
-    opts.failUnder === undefined
+    failUnder === undefined
       ? []
-      : sorted.filter((r) => r.status === 'evaluated' && r.result && r.result.score < (opts.failUnder as number));
+      : sorted.filter((r) => r.status === 'evaluated' && r.result && r.result.score < failUnder).map((r) => r.name);
 
-  if (opts.json) {
-    const output = {
-      tool: 'ghostdeps',
+  // --- Salida ---
+  let rendered: string;
+  if (format === 'json') {
+    rendered = JSON.stringify(
+      {
+        tool: 'ghostdeps',
+        version,
+        generatedAt: now.toISOString(),
+        manifest: manifest.manifestPath,
+        config: config.source,
+        options: { dev, transitive, depth: depth ?? null, failUnder: failUnder ?? null, authenticated: Boolean(token) },
+        thresholds: config.thresholds,
+        summary,
+        ignored,
+        failUnder: failUnder === undefined ? null : { threshold: failUnder, failing },
+        packages: sorted,
+      },
+      null,
+      2,
+    );
+  } else if (format === 'markdown') {
+    rendered = renderMarkdown(sorted, summary, now, {
       version,
-      generatedAt: now.toISOString(),
-      manifest: manifest.manifestPath,
-      options: { dev: opts.dev, failUnder: opts.failUnder ?? null, authenticated: Boolean(token) },
-      summary,
-      failUnder: opts.failUnder === undefined ? null : { threshold: opts.failUnder, failing: failing.map((r) => r.name) },
-      packages: sorted,
-    };
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+      projectName: manifest.projectName,
+      thresholds: config.thresholds,
+      failUnder,
+      failing,
+      ignored,
+    });
+  } else if (format === 'sarif') {
+    rendered = renderSarif(sorted, {
+      version,
+      manifestPath: manifest.manifestPath,
+      thresholds: config.thresholds,
+    });
   } else {
     const title = manifest.projectName ? ` · ${manifest.projectName}` : '';
-    process.stdout.write(`${chalk.bold(`\n👻 GhostDeps v${version}${title}`)}\n`);
-    process.stdout.write(`${renderTable(sorted, now)}\n`);
-    process.stdout.write(`${renderSummary(summary)}\n`);
-    if (opts.explain) process.stdout.write(`${renderExplain(sorted)}\n`);
+    rendered = [
+      chalk.bold(`\n👻 GhostDeps v${version}${title}`),
+      renderTable(sorted, now),
+      renderSummary(summary, config.thresholds),
+      ...(opts.explain ? [renderExplain(sorted)] : []),
+    ].join('\n');
+  }
+
+  if (opts.output) {
+    const file = path.resolve(opts.output);
+    await writeFile(file, `${stripVTControlCharacters(rendered)}\n`, 'utf8');
+    log(chalk.green(`✔ Informe escrito en ${file}`));
+  } else {
+    process.stdout.write(`${rendered}\n`);
   }
 
   if (gate.resetAt && gate.resetAt.getTime() > Date.now() && summary.errors > 0) {
@@ -136,12 +220,12 @@ async function run(opts: CliOptions, version: string): Promise<number> {
     );
   }
 
-  if (opts.failUnder !== undefined) {
+  if (failUnder !== undefined) {
     if (failing.length > 0) {
-      log(chalk.red(`\n✖ ${failing.length} paquete(s) por debajo de --fail-under ${opts.failUnder}: ${failing.map((r) => r.name).join(', ')}`));
+      log(chalk.red(`\n✖ ${failing.length} paquete(s) por debajo de --fail-under ${failUnder}: ${failing.join(', ')}`));
       return EXIT.FAIL_UNDER;
     }
-    if (!opts.json) log(chalk.green(`\n✔ Ningún paquete evaluado por debajo de ${opts.failUnder}.`));
+    if (!quiet) log(chalk.green(`\n✔ Ningún paquete evaluado por debajo de ${failUnder}.`));
   }
   return EXIT.OK;
 }
@@ -155,8 +239,16 @@ async function main(): Promise<void> {
     .description('Detecta dependencias fantasma: abandonadas, con bus factor bajo o con señales de secuestro.')
     .version(version, '-v, --version')
     .option('-p, --path <dir>', 'directorio que contiene el package.json', process.cwd())
+    .option('--config <file>', 'archivo de configuración (por defecto .ghostdepsrc.json o "ghostdeps" en package.json)')
     .option('-d, --dev', 'incluir también devDependencies', false)
-    .option('--json', 'salida en JSON (stdout) para integraciones', false)
+    .option('-t, --transitive', 'incluir dependencias transitivas (requiere package-lock.json)', false)
+    .option('--depth <n>', 'profundidad máxima con --transitive (1 = solo directas)', positiveInt('--depth', 100))
+    .option('-i, --ignore <paquetes>', 'paquetes a omitir, separados por coma; admite * (ej. "@types/*")', collectList, [])
+    .addOption(
+      new Option('-f, --format <formato>', 'formato de salida').choices(['table', 'json', 'markdown', 'sarif']).default('table'),
+    )
+    .option('--json', 'atajo de --format json', false)
+    .option('-o, --output <file>', 'escribir el informe en un archivo en lugar de stdout')
     .option('--fail-under <score>', 'exit code 1 si algún paquete evaluado queda por debajo del score', scoreArg)
     .option('-c, --concurrency <n>', 'paquetes analizados en paralelo', positiveInt('--concurrency', 32), 4)
     .option('--no-cache', 'ignorar y no escribir la caché en disco')
@@ -166,10 +258,23 @@ async function main(): Promise<void> {
     .option('--explain', 'mostrar el desglose de penalizaciones de cada paquete', false)
     .addHelpText(
       'after',
-      '\nVariables de entorno:\n  GITHUB_TOKEN          token de GitHub (recomendado; 5000 req/h)\n  GHOSTDEPS_CACHE_DIR   directorio de caché personalizado\n\nCódigos de salida: 0 OK · 1 --fail-under incumplido · 2 error fatal',
+      [
+        '',
+        'Ejemplos:',
+        '  ghostdeps --dev --explain',
+        '  ghostdeps --transitive --depth 3 --ignore "@types/*"',
+        '  ghostdeps --format markdown -o ghostdeps.md',
+        '  ghostdeps --fail-under 40',
+        '',
+        'Variables de entorno:',
+        '  GITHUB_TOKEN / GH_TOKEN   token de GitHub (recomendado; 5000 req/h)',
+        '  GHOSTDEPS_CACHE_DIR       directorio de caché personalizado',
+        '',
+        'Códigos de salida: 0 OK · 1 --fail-under incumplido · 2 error fatal',
+      ].join('\n'),
     )
-    .action(async (opts: CliOptions) => {
-      process.exitCode = await run(opts, version);
+    .action(async (opts: CliOptions, command: Command) => {
+      process.exitCode = await run(opts, command, version);
     });
 
   // Evita que Commander haga process.exit(1) en errores de uso (colisionaría con --fail-under).

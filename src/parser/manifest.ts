@@ -31,34 +31,26 @@ const NON_REGISTRY_PREFIXES: ReadonlyArray<[prefix: string, reason: string]> = [
 
 export function classifySpec(name: string, spec: string, kind: DependencyKind): DependencySpec {
   const trimmed = spec.trim();
+  const base: DependencySpec = { name, registryName: name, spec: trimmed, kind, depth: 1, via: [] };
 
   // Alias: "foo": "npm:bar@^1.0.0" -> se evalúa "bar".
   if (trimmed.startsWith('npm:')) {
     const rest = trimmed.slice(4);
     const at = rest.lastIndexOf('@');
-    const registryName = at > 0 ? rest.slice(0, at) : rest;
-    return { name, registryName, spec: trimmed, kind };
+    return { ...base, registryName: at > 0 ? rest.slice(0, at) : rest };
   }
 
   for (const [prefix, reason] of NON_REGISTRY_PREFIXES) {
-    if (trimmed.startsWith(prefix)) {
-      return { name, registryName: name, spec: trimmed, kind, unsupportedReason: reason };
-    }
+    if (trimmed.startsWith(prefix)) return { ...base, unsupportedReason: reason };
   }
 
   // Shorthand de GitHub como especificador: "usuario/repo" o "usuario/repo#rama".
   // Un rango semver o un dist-tag nunca contienen "/".
   if (trimmed.includes('/')) {
-    return {
-      name,
-      registryName: name,
-      spec: trimmed,
-      kind,
-      unsupportedReason: 'Dependencia instalada directamente desde GitHub (shorthand)',
-    };
+    return { ...base, unsupportedReason: 'Dependencia instalada directamente desde GitHub (shorthand)' };
   }
 
-  return { name, registryName: name, spec: trimmed, kind };
+  return base;
 }
 
 function readDependencyBlock(

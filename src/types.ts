@@ -3,16 +3,20 @@
  * para que los objetos sean serializables tal cual (caché en disco y salida --json).
  */
 
-export type DependencyKind = 'dependencies' | 'devDependencies';
+export type DependencyKind = 'dependencies' | 'devDependencies' | 'transitive';
 
 export interface DependencySpec {
   /** Nombre con el que aparece en package.json (clave). */
   name: string;
   /** Nombre real en el registry (difiere si es un alias `npm:otro@^1`). */
   registryName: string;
-  /** Rango/especificador declarado. */
+  /** Rango/especificador declarado (o versión resuelta en el lockfile para transitivas). */
   spec: string;
   kind: DependencyKind;
+  /** 1 = directa; 2+ = transitiva (distancia mínima desde el proyecto). */
+  depth: number;
+  /** Cadena de dependencias por la que se llega a una transitiva (ej. ["express", "debug"]). */
+  via: string[];
   /** Si está presente, la dependencia no proviene del registry y no se evalúa. */
   unsupportedReason?: string;
 }
@@ -123,6 +127,8 @@ export interface PackageReport {
   registryName: string;
   spec: string;
   kind: DependencyKind;
+  depth: number;
+  via: string[];
   status: ReportStatus;
   /** Motivo de "No evaluable" o mensaje de error. */
   reason: string | null;

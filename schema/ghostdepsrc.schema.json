@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unpkg.com/ghostdeps/schema/ghostdepsrc.schema.json",
+  "title": "GhostDeps configuration",
+  "description": "Configuración de GhostDeps (.ghostdepsrc.json o clave \"ghostdeps\" en package.json).",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "points": { "type": "number", "minimum": 0, "maximum": 100 },
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["threshold", "points"],
+      "properties": {
+        "threshold": { "type": "number", "minimum": 0, "maximum": 100000 },
+        "points": { "$ref": "#/definitions/points" }
+      }
+    },
+    "tiers": { "type": "array", "items": { "$ref": "#/definitions/tier" } }
+  },
+  "properties": {
+    "$schema": { "type": "string" },
+    "ignore": {
+      "description": "Paquetes a omitir. Admite comodín * (ej. \"@types/*\").",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "failUnder": { "description": "Exit code 1 si algún paquete evaluado queda por debajo.", "type": "number", "minimum": 0, "maximum": 100 },
+    "dev": { "description": "Incluir devDependencies.", "type": "boolean" },
+    "transitive": { "description": "Incluir dependencias transitivas (package-lock.json).", "type": "boolean" },
+    "depth": { "description": "Profundidad máxima con transitive (1 = solo directas).", "type": "integer", "minimum": 1, "maximum": 100 },
+    "concurrency": { "description": "Paquetes analizados en paralelo.", "type": "integer", "minimum": 1, "maximum": 32 },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "healthy": { "description": "Score mínimo para verde (default 70).", "type": "number", "minimum": 0, "maximum": 100 },
+        "caution": { "description": "Score mínimo para amarillo (default 40).", "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "weights": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "archived": { "$ref": "#/definitions/points", "description": "Default 40." },
+        "deprecated": { "$ref": "#/definitions/points", "description": "Default 40." },
+        "abandonment": { "$ref": "#/definitions/tiers", "description": "Días sin commits (umbral estricto). Default: >730:45, >365:25, >180:10." },
+        "stalePublish": { "$ref": "#/definitions/tier", "description": "Días sin publicar en npm. Default: >730:5." },
+        "busFactor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "zero": { "$ref": "#/definitions/points", "description": "Default 20." },
+            "one": { "$ref": "#/definitions/points", "description": "Default 15." },
+            "two": { "$ref": "#/definitions/points", "description": "Default 5." }
+          }
+        },
+        "unansweredIssues": { "$ref": "#/definitions/tiers", "description": "Issues sin respuesta (umbral inclusivo). Default: >=25:15, >=10:10, >=3:5." },
+        "repoRedirect": { "$ref": "#/definitions/points", "description": "Default 10." },
+        "maintainersChanged": { "$ref": "#/definitions/points", "description": "Default 15." },
+        "newPublisher": { "$ref": "#/definitions/points", "description": "Default 15." },
+        "hijackPattern": { "$ref": "#/definitions/points", "description": "Default 15." },
+        "dormantRevivalDays": { "type": "number", "minimum": 0, "maximum": 100000, "description": "Default 365." }
+      }
+    }
+  }
+}

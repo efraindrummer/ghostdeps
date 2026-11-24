@@ -1,7 +1,7 @@
 import type { GitHubClient } from './clients/github.js';
 import type { NpmClient } from './clients/npm.js';
 import { NotFoundError, errorMessage } from './errors.js';
-import { computeScore } from './scoring/scoring.js';
+import { computeScore, DEFAULT_WEIGHTS, THRESHOLDS, type ScoringWeights, type Thresholds } from './scoring/scoring.js';
 import { buildSignals } from './scoring/signals.js';
 import type { DependencySpec, PackageReport, Summary } from './types.js';
 import { mapWithConcurrency } from './utils.js';
@@ -10,6 +10,8 @@ export interface AnalyzerDeps {
   npm: NpmClient;
   github: GitHubClient;
   now: Date;
+  weights?: ScoringWeights;
+  thresholds?: Thresholds;
 }
 
 const HOST_LABEL: Record<string, string> = { gitlab: 'GitLab', bitbucket: 'Bitbucket' };
@@ -20,6 +22,8 @@ function baseReport(dep: DependencySpec): PackageReport {
     registryName: dep.registryName,
     spec: dep.spec,
     kind: dep.kind,
+    depth: dep.depth,
+    via: dep.via,
     status: 'evaluated',
     reason: null,
     npm: null,
@@ -60,7 +64,7 @@ export async function analyzePackage(dep: DependencySpec, deps: AnalyzerDeps): P
   }
 
   report.signals = buildSignals(report.npm, report.github, deps.now);
-  report.result = computeScore(report.signals);
+  report.result = computeScore(report.signals, deps.weights ?? DEFAULT_WEIGHTS, deps.thresholds ?? THRESHOLDS);
   return report;
 }
 
