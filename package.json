@@ -1,5 +1,5 @@
 {
-  "name": "ghostdeps",
+  "name": "@efraindrummer/ghostdeps",
   "version": "0.2.0",
   "description": "Detecta dependencias fantasma (abandonadas, bus factor bajo o con señales de secuestro) evaluando la salud social y de mantenimiento del repositorio origen.",
   "keywords": [
@@ -13,6 +13,9 @@
   ],
   "license": "MIT",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "ghostdeps": "dist/cli.js"
   },
