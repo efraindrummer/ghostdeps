@@ -5,6 +5,7 @@ import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import chalk from 'chalk';
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
+import { analyzeWithAi, detectAiConfig, type AiProvider } from './ai/advisor.js';
 import { analyzeAll, sortReports, summarize } from './analyzer.js';
 import { DiskCache, defaultCacheDir } from './clients/cache.js';
 import { GitHubClient } from './clients/github.js';
@@ -12,6 +13,7 @@ import { RateLimitGate } from './clients/http.js';
 import { NpmClient } from './clients/npm.js';
 import { createIgnoreMatcher, loadConfig } from './config.js';
 import { GhostDepsError, errorMessage } from './errors.js';
+import { startMcpServer } from './mcp/server.js';
 import { readLockfile, resolveTransitive } from './parser/lockfile.js';
 import { readManifest } from './parser/manifest.js';
 import { renderMarkdown } from './render/markdown.js';
@@ -71,11 +73,20 @@ interface CliOptions {
   timeout: number;
   maxWait: number;
   explain: boolean;
+  mcp: boolean;
+  ai: boolean;
+  aiProvider?: AiProvider;
+  aiModel?: string;
 }
 
 const log = (msg: string) => process.stderr.write(`${msg}\n`);
 
 async function run(opts: CliOptions, command: Command, version: string): Promise<number> {
+  if (opts.mcp) {
+    startMcpServer(version);
+    return new Promise(() => {}); // Escuchar indefinidamente sobre stdio
+  }
+
   const fromCli = (key: keyof CliOptions) => command.getOptionValueSource(key) === 'cli';
   const format: OutputFormat = opts.json ? 'json' : opts.format;
   const quiet = format !== 'table'; // en json/markdown, stderr solo para avisos importantes
@@ -157,6 +168,30 @@ async function run(opts: CliOptions, command: Command, version: string): Promise
       ? []
       : sorted.filter((r) => r.status === 'evaluated' && r.result && r.result.score < failUnder).map((r) => r.name);
 
+  // --- Asesor de Ciberseguridad IA ---
+  let aiResult = null;
+  if (opts.ai) {
+    const hasRisks = sorted.some((r) => r.status === 'evaluated' && r.result && r.result.score < 70);
+    const aiConfig = detectAiConfig({ provider: opts.aiProvider, model: opts.aiModel });
+    if (!aiConfig) {
+      log(
+        chalk.yellow(
+          '\n⚠ Modo --ai activado pero no se detectó ninguna clave de API.\n' +
+            '  Exporta GEMINI_API_KEY, ANTHROPIC_API_KEY u OPENAI_API_KEY en tu entorno.',
+        ),
+      );
+    } else if (!hasRisks) {
+      if (!quiet) log(chalk.green('\n🤖 IA: Todas las dependencias están saludables (score ≥ 70). No se requieren reemplazos.'));
+    } else {
+      if (!quiet) log(chalk.cyan(`\n🤖 Consultando a ${aiConfig.provider} (${aiConfig.model}) para análisis de mitigación y reemplazos...`));
+      try {
+        aiResult = await analyzeWithAi(sorted, summary, { provider: opts.aiProvider, model: opts.aiModel });
+      } catch (err) {
+        log(chalk.red(`\n✖ Error consultando a la IA: ${(err as Error).message}`));
+      }
+    }
+  }
+
   // --- Salida ---
   let rendered: string;
   if (format === 'json') {
@@ -167,11 +202,12 @@ async function run(opts: CliOptions, command: Command, version: string): Promise
         generatedAt: now.toISOString(),
         manifest: manifest.manifestPath,
         config: config.source,
-        options: { dev, transitive, depth: depth ?? null, failUnder: failUnder ?? null, authenticated: Boolean(token) },
+        options: { dev, transitive, depth: depth ?? null, failUnder: failUnder ?? null, authenticated: Boolean(token), ai: opts.ai },
         thresholds: config.thresholds,
         summary,
         ignored,
         failUnder: failUnder === undefined ? null : { threshold: failUnder, failing },
+        aiAnalysis: aiResult,
         packages: sorted,
       },
       null,
@@ -186,6 +222,9 @@ async function run(opts: CliOptions, command: Command, version: string): Promise
       failing,
       ignored,
     });
+    if (aiResult) {
+      rendered += `\n\n### 🤖 Recomendaciones de Ciberseguridad (${aiResult.provider} / ${aiResult.model})\n\n${aiResult.analysis}\n`;
+    }
   } else if (format === 'sarif') {
     rendered = renderSarif(sorted, {
       version,
@@ -194,12 +233,17 @@ async function run(opts: CliOptions, command: Command, version: string): Promise
     });
   } else {
     const title = manifest.projectName ? ` · ${manifest.projectName}` : '';
-    rendered = [
+    const parts = [
       chalk.bold(`\n👻 GhostDeps v${version}${title}`),
       renderTable(sorted, now),
       renderSummary(summary, config.thresholds),
       ...(opts.explain ? [renderExplain(sorted)] : []),
-    ].join('\n');
+    ];
+    if (aiResult) {
+      parts.push(chalk.bold.cyan(`\n🤖 Recomendaciones de Ciberseguridad (${aiResult.provider} / ${aiResult.model}):`));
+      parts.push(aiResult.analysis);
+    }
+    rendered = parts.join('\n');
   }
 
   if (opts.output) {
@@ -256,6 +300,12 @@ async function main(): Promise<void> {
     .option('--timeout <ms>', 'timeout por request en milisegundos', positiveInt('--timeout'), 15_000)
     .option('--max-wait <seconds>', 'espera máxima ante rate limit antes de abortar', positiveInt('--max-wait'), 60)
     .option('--explain', 'mostrar el desglose de penalizaciones de cada paquete', false)
+    .option('--ai', 'analizar dependencias con IA para sugerir reemplazos y plan de mitigación', false)
+    .addOption(
+      new Option('--ai-provider <provider>', 'proveedor de IA a utilizar').choices(['gemini', 'anthropic', 'openai']),
+    )
+    .option('--ai-model <model>', 'modelo específico de IA a consultar')
+    .option('--mcp', 'iniciar servidor MCP (Model Context Protocol) sobre stdio para agentes de IA', false)
     .addHelpText(
       'after',
       [
@@ -263,12 +313,17 @@ async function main(): Promise<void> {
         'Ejemplos:',
         '  ghostdeps --dev --explain',
         '  ghostdeps --transitive --depth 3 --ignore "@types/*"',
+        '  ghostdeps --ai',
+        '  ghostdeps --mcp',
         '  ghostdeps --format markdown -o ghostdeps.md',
         '  ghostdeps --fail-under 40',
         '',
         'Variables de entorno:',
-        '  GITHUB_TOKEN / GH_TOKEN   token de GitHub (recomendado; 5000 req/h)',
-        '  GHOSTDEPS_CACHE_DIR       directorio de caché personalizado',
+        '  GITHUB_TOKEN / GH_TOKEN     token de GitHub (recomendado; 5000 req/h)',
+        '  GEMINI_API_KEY              clave para modo --ai con Google Gemini',
+        '  ANTHROPIC_API_KEY           clave para modo --ai con Anthropic Claude',
+        '  OPENAI_API_KEY              clave para modo --ai con OpenAI ChatGPT',
+        '  GHOSTDEPS_CACHE_DIR         directorio de caché personalizado',
         '',
         'Códigos de salida: 0 OK · 1 --fail-under incumplido · 2 error fatal',
       ].join('\n'),

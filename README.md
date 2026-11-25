@@ -9,7 +9,7 @@
 Los escáneres de vulnerabilidades te avisan cuando ya existe un CVE. GhostDeps intenta avisarte **antes**: cuando una dependencia lleva años sin commits, depende de una sola persona, está archivada/deprecated o cambió de manos de forma sospechosa (el patrón de `event-stream`, `ua-parser-js` o `xz`).
 
 ```
-👻 GhostDeps v0.2.0 · mi-app
+👻 GhostDeps v0.3.0 · mi-app
 ┌─────────────────────────────┬───────┬──────────────────┬───────────────┬──────────────────────────────────────────────┐
 │ Paquete                     │ Score │ Días últ. commit │ Mant. activos │ Alerta principal                             │
 ├─────────────────────────────┼───────┼──────────────────┼───────────────┼──────────────────────────────────────────────┤
@@ -126,6 +126,10 @@ ghostdeps --version
 | `--fail-under <score>` | Exit code `1` si algún paquete **evaluado** tiene score menor | — |
 | `-c, --concurrency <n>` | Paquetes analizados en paralelo (1–32) | `4` |
 | `--explain` | Desglose de penalizaciones de cada paquete | `false` |
+| `--ai` | Asesor de ciberseguridad con IA (reemplazos y plan de mitigación) | `false` |
+| `--ai-provider <prov>` | Proveedor de IA: `gemini`, `anthropic` u `openai` | autodetección |
+| `--ai-model <model>` | Modelo específico de IA a consultar | por defecto del proveedor |
+| `--mcp` | Inicia el servidor MCP (Model Context Protocol) sobre stdio | `false` |
 | `--no-cache` | No lee ni escribe la caché en disco | caché activa |
 | `--cache-ttl <horas>` | TTL de la caché | `24` |
 | `--timeout <ms>` | Timeout por petición | `15000` |
@@ -271,6 +275,55 @@ La validación es estricta: una clave mal escrita o un valor fuera de rango abor
 ```
 
 Con la propiedad `$schema`, VS Code y otros editores ofrecen **autocompletado y validación** mientras editas. Hay un ejemplo completo en [`examples/.ghostdepsrc.json`](examples/.ghostdepsrc.json) y el esquema en [`schema/ghostdepsrc.schema.json`](schema/ghostdepsrc.schema.json).
+
+### Asesor de Ciberseguridad con IA (`--ai`)
+
+GhostDeps integra conexión nativa (sin SDKs pesados) con **Google Gemini**, **Anthropic Claude** y **OpenAI ChatGPT**.
+
+Al activar `--ai`, el motor analiza las dependencias con puntuación baja o en riesgo y consulta al modelo de IA para generar:
+1. **Diagnóstico ejecutivo:** Evaluación del nivel de exposición ante ataques a la cadena de suministro.
+2. **Reemplazos concretos:** Alternativas activas, mantenidas y seguras (o APIs nativas de Node.js como `fetch`, `crypto`, etc.).
+3. **Plan de mitigación:** Instrucciones paso a paso (ej. `overrides` en `package.json` para transitivas, o refactorización).
+
+```bash
+# Exporta tu clave favorita (autodetección inteligente)
+export GEMINI_API_KEY="AIzaSy..."          # Gemini (por defecto: gemini-1.5-flash)
+# o bien:
+export ANTHROPIC_API_KEY="sk-ant-..."      # Claude (por defecto: claude-3-5-haiku)
+# o bien:
+export OPENAI_API_KEY="sk-proj-..."        # OpenAI (por defecto: gpt-4o-mini)
+
+# Ejecutar auditoría con asesoría de IA
+ghostdeps --ai
+
+# Elegir proveedor o modelo específico
+ghostdeps --ai --ai-provider anthropic --ai-model claude-3-5-sonnet-20241022
+ghostdeps --ai --format markdown -o informe-con-ia.md
+```
+
+### Servidor MCP para Agentes de IA (`--mcp`)
+
+GhostDeps implementa el estándar abierto **Model Context Protocol (MCP)** sobre `stdio` (JSON-RPC 2.0). Esto permite que agentes como **Claude Desktop**, **Cursor**, **Gemini CLI** o cualquier cliente MCP invoquen a GhostDeps directamente como una herramienta (`ghostdeps_audit`).
+
+#### Configuración en Claude Desktop o Cursor
+En tu archivo de configuración MCP (ej. `claude_desktop_config.json` o `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "ghostdeps": {
+      "command": "npx",
+      "args": ["-y", "@efraindrummer/ghostdeps", "--mcp"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_..."
+      }
+    }
+  }
+}
+```
+
+Una vez configurado, tu agente de IA puede auditar proyectos automáticamente cuando se lo pidas en lenguaje natural:
+> *"Revisa las dependencias de este repositorio con GhostDeps y dime cuáles tienen riesgo de abandono o bus factor bajo."*
 
 ### Formatos de salida
 

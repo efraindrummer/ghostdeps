@@ -2,6 +2,13 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y [SemVer](https://semver.org/lang/es/).
 
+## [0.3.0] - 2026-11-25
+
+### Añadido
+- **Asesor de Ciberseguridad con IA (`--ai`)**: Integración nativa sin dependencias pesadas con **Google Gemini**, **Anthropic Claude** y **OpenAI ChatGPT**. Detecta automáticamente claves de API (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) y genera recomendaciones concretas de migración, alternativas seguras y plan de mitigación priorizado.
+- **Servidor MCP (Model Context Protocol) (`--mcp`)**: Permite a agentes de IA (Claude Desktop, Cursor, Gemini CLI, etc.) invocar a GhostDeps como una herramienta (`ghostdeps_audit`) mediante stdio (JSON-RPC 2.0).
+- Flags `--ai-provider <gemini|anthropic|openai>` y `--ai-model <model>`.
+
 ## [0.2.0] - 2026-11-24
 
 ### Añadido
