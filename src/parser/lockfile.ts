@@ -41,14 +41,26 @@ export interface YarnLockfile {
   entries: Map<string, YarnPackage>;
 }
 
-export type AnyLockfile = NpmLockfile | YarnLockfile;
+export interface PnpmPackage {
+  name: string;
+  version: string;
+  dependencies: Record<string, string>;
+  optionalDependencies: Record<string, string>;
+}
+
+export interface PnpmLockfile {
+  type: 'pnpm';
+  packages: Map<string, PnpmPackage>;
+}
+
+export type AnyLockfile = NpmLockfile | YarnLockfile | PnpmLockfile;
 
 export interface TransitiveOptions {
   /** Profundidad máxima (1 = solo directas). */
   maxDepth: number;
 }
 
-export const LOCKFILE_NAMES = ['npm-shrinkwrap.json', 'package-lock.json', 'yarn.lock'] as const;
+export const LOCKFILE_NAMES = ['npm-shrinkwrap.json', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'] as const;
 
 function unquote(s: string): string {
   const t = s.trim();
@@ -142,6 +154,94 @@ export function parseYarnLock(content: string): YarnLockfile {
   return { type: 'yarn', entries };
 }
 
+/**
+ * Parser ligero y seguro para pnpm-lock.yaml (v5/v6/v9).
+ */
+export function parsePnpmLock(content: string): PnpmLockfile {
+  const packages = new Map<string, PnpmPackage>();
+  const lines = content.split(/\r?\n/);
+  let inPackages = false;
+  let currentKey: string | null = null;
+  let currentPkg: Partial<PnpmPackage> | null = null;
+  let subSection: 'none' | 'dependencies' | 'optionalDependencies' = 'none';
+
+  const flush = () => {
+    if (currentKey && currentPkg && currentPkg.name && currentPkg.version) {
+      packages.set(currentKey, {
+        name: currentPkg.name,
+        version: currentPkg.version,
+        dependencies: currentPkg.dependencies ?? {},
+        optionalDependencies: currentPkg.optionalDependencies ?? {},
+      });
+    }
+    currentKey = null;
+    currentPkg = null;
+    subSection = 'none';
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i] ?? '';
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    if (rawLine.startsWith('packages:')) {
+      inPackages = true;
+      continue;
+    }
+
+    if (!inPackages) continue;
+
+    if (!rawLine.startsWith(' ') && trimmed.endsWith(':')) {
+      flush();
+      inPackages = false;
+      continue;
+    }
+
+    if (rawLine.startsWith('  ') && !rawLine.startsWith('    ') && trimmed.endsWith(':')) {
+      flush();
+      let key = trimmed.slice(0, -1).trim();
+      key = unquote(key).replace(/^\//, '').replace(/\(.*$/, '');
+      const lastAt = key.lastIndexOf('@');
+      if (lastAt > 0) {
+        const name = key.slice(0, lastAt);
+        const version = key.slice(lastAt + 1);
+        currentKey = `${name}@${version}`;
+        currentPkg = { name, version, dependencies: {}, optionalDependencies: {} };
+      }
+      continue;
+    }
+
+    if (!currentPkg) continue;
+
+    if (rawLine.startsWith('    ') && !rawLine.startsWith('      ')) {
+      if (trimmed === 'dependencies:') {
+        subSection = 'dependencies';
+      } else if (trimmed === 'optionalDependencies:') {
+        subSection = 'optionalDependencies';
+      } else {
+        subSection = 'none';
+      }
+      continue;
+    }
+
+    if (rawLine.startsWith('      ') && (subSection === 'dependencies' || subSection === 'optionalDependencies')) {
+      const colonIdx = trimmed.indexOf(':');
+      if (colonIdx > 0) {
+        const depName = unquote(trimmed.slice(0, colonIdx));
+        const depVersion = unquote(trimmed.slice(colonIdx + 1));
+        if (subSection === 'dependencies') {
+          currentPkg.dependencies![depName] = depVersion;
+        } else {
+          currentPkg.optionalDependencies![depName] = depVersion;
+        }
+      }
+    }
+  }
+
+  flush();
+  return { type: 'pnpm', packages };
+}
+
 export async function readLockfile(dir: string): Promise<{ file: string; lock: AnyLockfile }> {
   for (const name of LOCKFILE_NAMES) {
     const file = path.resolve(dir, name);
@@ -162,6 +262,15 @@ export async function readLockfile(dir: string): Promise<{ file: string; lock: A
       }
     }
 
+    if (name === 'pnpm-lock.yaml') {
+      try {
+        const lock = parsePnpmLock(content);
+        return { file, lock };
+      } catch (cause) {
+        throw new ManifestError(`Error al procesar ${file}: ${(cause as Error).message}`, { cause });
+      }
+    }
+
     try {
       const parsed = JSON.parse(content) as Record<string, unknown>;
       const lock: NpmLockfile = {
@@ -176,8 +285,8 @@ export async function readLockfile(dir: string): Promise<{ file: string; lock: A
   }
 
   throw new ManifestError(
-    `--transitive requiere package-lock.json o yarn.lock en ${path.resolve(dir)}. ` +
-      'Ejecuta "npm install" o "yarn install".',
+    `--transitive requiere package-lock.json, yarn.lock o pnpm-lock.yaml en ${path.resolve(dir)}. ` +
+      'Ejecuta "npm install", "yarn install" o "pnpm install".',
   );
 }
 
@@ -346,9 +455,84 @@ function resolveYarnTransitive(
   return result;
 }
 
+function resolvePnpmTransitive(
+  lock: PnpmLockfile,
+  direct: readonly DependencySpec[],
+  options: TransitiveOptions,
+): DependencySpec[] {
+  const packages = lock.packages;
+  const directNames = new Set(direct.map((d) => d.name));
+  const seenNames = new Set<string>(directNames);
+  const visited = new Set<string>();
+  const result: DependencySpec[] = [];
+
+  const findEntry = (name: string, spec?: string): PnpmPackage | undefined => {
+    if (spec) {
+      const cleanSpec = spec.replace(/\(.*$/, '');
+      const exactKey = `${name}@${cleanSpec}`;
+      if (packages.has(exactKey)) return packages.get(exactKey);
+      if (packages.has(spec)) return packages.get(spec);
+    }
+    const prefix = `${name}@`;
+    for (const [k, v] of packages) {
+      if (k.startsWith(prefix)) return v;
+    }
+    return undefined;
+  };
+
+  interface Node {
+    name: string;
+    pkg: PnpmPackage;
+    depth: number;
+    via: string[];
+  }
+  const queue: Node[] = [];
+
+  for (const d of direct) {
+    if (d.unsupportedReason) continue;
+    const pkg = findEntry(d.name, d.spec);
+    if (!pkg) continue;
+    const visitKey = `${d.name}@${pkg.version}`;
+    if (visited.has(visitKey)) continue;
+    visited.add(visitKey);
+    queue.push({ name: d.name, pkg, depth: 1, via: [d.name] });
+  }
+
+  while (queue.length > 0) {
+    const node = queue.shift() as Node;
+    if (node.depth >= options.maxDepth) continue;
+
+    const children = { ...node.pkg.dependencies, ...node.pkg.optionalDependencies };
+    for (const [childName, childSpec] of Object.entries(children).sort(([a], [b]) => a.localeCompare(b))) {
+      const childPkg = findEntry(childName, childSpec);
+      if (!childPkg) continue;
+      const visitKey = `${childName}@${childPkg.version}`;
+      if (visited.has(visitKey)) continue;
+      visited.add(visitKey);
+
+      const depth = node.depth + 1;
+      if (!seenNames.has(childName)) {
+        seenNames.add(childName);
+        const spec: DependencySpec = {
+          name: childName,
+          registryName: childPkg.name,
+          spec: childPkg.version,
+          kind: 'transitive',
+          depth,
+          via: node.via,
+        };
+        result.push(spec);
+      }
+      queue.push({ name: childName, pkg: childPkg, depth, via: [...node.via, childName] });
+    }
+  }
+
+  return result;
+}
+
 /**
  * Devuelve SOLO las dependencias transitivas (profundidad >= 2), deduplicadas por nombre,
- * alcanzables desde las directas indicadas en un lockfile de npm o Yarn.
+ * alcanzables desde las directas indicadas en un lockfile de npm, Yarn o pnpm.
  */
 export function resolveTransitive(
   lock: AnyLockfile,
@@ -357,6 +541,9 @@ export function resolveTransitive(
 ): DependencySpec[] {
   if (lock.type === 'yarn') {
     return resolveYarnTransitive(lock, direct, options);
+  }
+  if (lock.type === 'pnpm') {
+    return resolvePnpmTransitive(lock, direct, options);
   }
   return resolveNpmTransitive(lock, direct, options);
 }

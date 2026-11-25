@@ -1,11 +1,44 @@
 import { normalizeRepository } from '../parser/repoUrl.js';
-import type { MaintainerChange, NpmInfo } from '../types.js';
+import type { InstallScript, InstallScriptSignal, MaintainerChange, NpmInfo } from '../types.js';
 import type { DiskCache } from './cache.js';
 import { fetchJson } from './http.js';
 
 const REGISTRY = 'https://registry.npmjs.org';
 /** Nº de versiones previas a la última que se usan para comparar publicadores. */
 const PUBLISHER_HISTORY = 5;
+
+const SUSPICIOUS_SCRIPT_REGEX = /\b(curl|wget|powershell|cmd\.exe|bash|sh)\b|https?:\/\/|eval\(|Buffer\.from\(|\bbase64\b|\/etc\/(passwd|shadow)|\.ssh\/|\.env\b/i;
+const LIFECYCLE_STAGES = ['preinstall', 'install', 'postinstall'] as const;
+
+export function inspectInstallScripts(scripts: Record<string, unknown> | undefined): InstallScriptSignal {
+  if (!scripts || typeof scripts !== 'object') {
+    return { hasInstallScripts: false, suspicious: false, scripts: [] };
+  }
+  const detected: InstallScript[] = [];
+  let isSuspicious = false;
+
+  for (const stage of LIFECYCLE_STAGES) {
+    const cmd = scripts[stage];
+    if (typeof cmd === 'string' && cmd.trim()) {
+      const match = SUSPICIOUS_SCRIPT_REGEX.test(cmd);
+      let reason: string | undefined;
+      if (match) {
+        isSuspicious = true;
+        if (/curl|wget|https?:\/\//i.test(cmd)) reason = 'descarga de red en la instalación';
+        else if (/powershell|cmd\.exe|bash|sh/i.test(cmd)) reason = 'ejecución de shell';
+        else if (/eval\(|base64|Buffer\.from/i.test(cmd)) reason = 'posible ofuscación / eval';
+        else reason = 'patrón sospechoso';
+      }
+      detected.push({ stage, command: cmd.trim(), suspicious: match, reason });
+    }
+  }
+
+  return {
+    hasInstallScripts: detected.length > 0,
+    suspicious: isSuspicious,
+    scripts: detected,
+  };
+}
 
 interface NpmPerson {
   name?: string;
@@ -19,6 +52,7 @@ interface NpmVersionDoc {
   homepage?: string;
   maintainers?: NpmPerson[] | NpmPerson | string;
   _npmUser?: NpmPerson | string;
+  scripts?: Record<string, unknown>;
 }
 
 export interface NpmPackument {
@@ -132,6 +166,7 @@ export function extractNpmInfo(name: string, doc: NpmPackument): NpmInfo {
     latestPublisher,
     previousPublishers,
     maintainersChange,
+    installScripts: inspectInstallScripts(latestDoc?.scripts as Record<string, unknown> | undefined),
   };
 }
 

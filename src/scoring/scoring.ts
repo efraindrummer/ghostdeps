@@ -32,6 +32,8 @@ export interface ScoringWeights {
   newPublisher: number;
   /** Extra si un publicador nuevo coincide con otra señal de transferencia o con una "resurrección". */
   hijackPattern: number;
+  /** Penalización por scripts de instalación con comandos sospechosos (curl, eval, bash, etc.). */
+  suspiciousScripts?: number;
   /** Hueco entre publicaciones que convierte a un publicador nuevo en "resurrección" sospechosa. */
   dormantRevivalDays: number;
 }
@@ -55,6 +57,7 @@ export const DEFAULT_WEIGHTS: ScoringWeights = Object.freeze({
   maintainersChanged: 15,
   newPublisher: 15,
   hijackPattern: 15,
+  suspiciousScripts: 35,
   dormantRevivalDays: 365,
 });
 
@@ -78,6 +81,7 @@ export const CATEGORY_LABELS: Record<HealthCategory, string> = {
 
 /** Prioridad para desempatar la alerta principal cuando dos penalizaciones pesan igual. */
 const PRIORITY: readonly PenaltyId[] = [
+  'suspicious-install-scripts',
   'hijack-pattern',
   'archived',
   'deprecated',
@@ -150,6 +154,19 @@ export function computeScore(
       ? `tras ${s.publishGapDays} días sin publicar`
       : 'junto a otra señal de transferencia';
     add('hijack-pattern', w.hijackPattern, `Patrón de posible secuestro: publicador nuevo ${why}`);
+  }
+
+  // --- Scripts de instalación sospechosos ---
+  if (s.installScripts?.suspicious) {
+    const reasons = s.installScripts.scripts
+      .filter((sc) => sc.suspicious)
+      .map((sc) => `${sc.stage} (${sc.reason ?? 'sospechoso'})`)
+      .join(', ');
+    add(
+      'suspicious-install-scripts',
+      w.suspiciousScripts ?? 35,
+      `Script de instalación potencialmente peligroso: ${reasons}`,
+    );
   }
 
   const total = penalties.reduce((acc, p) => acc + p.points, 0);

@@ -19,5 +19,6 @@ export function buildSignals(npm: NpmInfo, gh: GitHubInfo, now: Date): HealthSig
     repoRedirected: gh.redirected,
     maintainersAdded: npm.maintainersChange?.added ?? [],
     newPublisher,
+    installScripts: npm.installScripts,
   };
 }

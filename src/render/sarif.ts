@@ -79,6 +79,12 @@ export const SARIF_RULES: Record<PenaltyId, SarifRule> = {
     shortDescription: { text: 'Tiempo excesivo transcurrido desde la última publicación en npm' },
     defaultConfiguration: { level: 'note' },
   },
+  'suspicious-install-scripts': {
+    id: 'GD011',
+    name: 'SuspiciousInstallScript',
+    shortDescription: { text: 'Script de ciclo de vida de instalación potencialmente peligroso (pre/install/postinstall)' },
+    defaultConfiguration: { level: 'error' },
+  },
 };
 
 export interface SarifOptions {

@@ -1,6 +1,6 @@
 {
   "name": "@efraindrummer/ghostdeps",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Detecta dependencias fantasma (abandonadas, bus factor bajo o con señales de secuestro) evaluando la salud social y de mantenimiento del repositorio origen.",
   "keywords": [
     "supply-chain",

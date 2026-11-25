@@ -117,12 +117,13 @@ ghostdeps --version
 | `-p, --path <dir>` | Directorio con el `package.json` | directorio actual |
 | `--config <file>` | Archivo de configuración explícito | autodetección |
 | `-d, --dev` | Incluye también `devDependencies` | `false` |
-| `-t, --transitive` | Incluye dependencias transitivas (requiere `package-lock.json`) | `false` |
+| `-t, --transitive` | Incluye dependencias transitivas (requiere `package-lock.json`, `yarn.lock` o `pnpm-lock.yaml`) | `false` |
 | `--depth <n>` | Profundidad máxima con `--transitive` (1 = solo directas) | sin límite |
 | `-i, --ignore <lista>` | Paquetes a omitir, separados por coma; admite `*` | — |
-| `-f, --format <fmt>` | `table`, `json` o `markdown` | `table` |
+| `-f, --format <fmt>` | `table`, `json`, `markdown`, `sarif` o `html` | `table` |
 | `--json` | Atajo de `--format json` | `false` |
-| `-o, --output <file>` | Escribe el informe en un archivo (sin colores) | stdout |
+| `--html [file]` | Genera informe interactivo en HTML (atajo de `--format html`) | `false` |
+| `-o, --output <file>` | Escribe el informe en un archivo (sin colores ANSI) | stdout |
 | `--fail-under <score>` | Exit code `1` si algún paquete **evaluado** tiene score menor | — |
 | `-c, --concurrency <n>` | Paquetes analizados en paralelo (1–32) | `4` |
 | `--explain` | Desglose de penalizaciones de cada paquete | `false` |
@@ -214,7 +215,7 @@ Cómo funciona:
 - Reproduce la resolución de Node (`node_modules` anidados y *hoisting*) sobre el lockfile y recorre el grafo en anchura.
 - Cada paquete se analiza **una sola vez** aunque aparezca varias veces en el árbol (se deduplica por nombre).
 - Los paquetes instalados desde git o `file:` se marcan como *No evaluable*; los *workspaces* (`link: true`) no se recorren.
-- Soporta `package-lock.json` (npm ≥ 7 v2/v3) y `yarn.lock` (Yarn v1). `pnpm-lock.yaml` está en desarrollo.
+- Soporta `package-lock.json` (npm ≥ 7 v2/v3), `yarn.lock` (Yarn v1) y `pnpm-lock.yaml` (pnpm v5/v6/v9).
 
 > [!TIP]
 > Un árbol típico tiene cientos de paquetes (~3 peticiones a GitHub cada uno). Usa **siempre** `GITHUB_TOKEN`, y combina `--depth` e `ignore` para acotar. La caché hace que las ejecuciones siguientes sean casi instantáneas.
@@ -332,6 +333,7 @@ Una vez configurado, tu agente de IA puede auditar proyectos automáticamente cu
 | `table` (default) | Terminal, con colores | `ghostdeps` |
 | `json` | Integraciones, scripts, dashboards | `ghostdeps --json > report.json` |
 | `markdown` | Comentarios de PR, `$GITHUB_STEP_SUMMARY`, wikis | `ghostdeps -f markdown -o ghostdeps.md` |
+| `html` | Reporte visual interactivo y autónomo para CI / auditorías | `ghostdeps --html reporte.html` |
 | `sarif` | GitHub Code Scanning / Security alerts | `ghostdeps -f sarif -o ghostdeps.sarif` |
 
 En todos los formatos, el informe va a **stdout** (o al archivo de `-o`) y los avisos/progreso a **stderr**, así que se puede redirigir o encadenar sin problemas.
@@ -415,6 +417,89 @@ Reglas SARIF incluidas:
 - `GD008`: Publicador nuevo no habitual (`warning`)
 - `GD009`: Patrón combinado de secuestro/hijacking (`error`)
 - `GD010`: Publicación desactualizada en npm (`note`)
+- `GD011`: Script de ciclo de vida de instalación potencialmente peligroso (`error`)
+
+#### Reporte Visual Autónomo en HTML (`--html`)
+
+Genera un reporte web 100% self-contained (sin dependencias externas ni fuentes en la nube, ideal para entornos air-gapped o artefactos de CI):
+
+```bash
+ghostdeps --transitive --html reporte-seguridad.html
+```
+
+Incluye:
+- **Filtrado reactivo instantáneo:** Botones para filtrar por Crítico, Precaución, Saludable o solo dependencias con Lifecycle Scripts.
+- **Buscador interactivo:** Filtra en tiempo real por nombre de paquete o alertas.
+- **Acordeón de detalles:** Al hacer clic en cualquier fila, se expanden penalizaciones exactas, comandos ejecutados en `postinstall`, trazabilidad de transitivas y enlaces directos a npm y GitHub.
+
+### Remediación Automática (`ghostdeps fix`)
+
+Aísla o actualiza dependencias transitivas vulnerables o críticas inyectando resoluciones forzadas en tu `package.json`:
+- **npm:** genera bloque `overrides`
+- **yarn:** genera bloque `resolutions`
+- **pnpm:** genera bloque `pnpm.overrides`
+
+```bash
+# Vista previa sin modificar archivos
+ghostdeps fix --dry-run
+
+# Aplicar automáticamente overrides propuestos por el escáner (crea package.json.bak)
+ghostdeps fix
+
+# Inyectar un override manual específico
+ghostdeps fix --override "vulnerable-dep=^2.0.4"
+```
+
+### Inspección Forense de Versiones (`ghostdeps diff <paquete>`)
+
+Permite auditar qué cambió exactamente entre dos versiones publicadas en npm de cualquier paquete, detectando cambios bruscos o patrones de secuestro de cuentas (account hijacking):
+
+```bash
+# Comparar la última versión con la inmediata anterior
+ghostdeps diff event-stream
+
+# Comparar versiones específicas
+ghostdeps diff event-stream --from 3.3.5 --to 3.3.6
+
+# Auditoría asistida por IA
+ghostdeps diff ua-parser-js --from 0.7.28 --to 0.7.29 --ai
+```
+
+Detecta y alerta sobre:
+- Cambio de publicador (`_npmUser`)
+- Modificaciones en scripts de instalación (`preinstall`, `install`, `postinstall`)
+- Nuevos mantenedores añadidos o dados de baja
+- Nuevas dependencias agregadas
+- Alteración de URL de repositorio o redirecciones
+
+### GitHub Action Oficial (`action.yml`)
+
+Puedes integrar GhostDeps directamente en tus workflows de GitHub Actions:
+
+```yaml
+# .github/workflows/security.yml
+name: GhostDeps Security Audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run GhostDeps Audit
+        uses: efraindrummer/ghostdeps@v0.4.0
+        with:
+          fail-under: '60'
+          transitive: 'true'
+          format: 'markdown'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
 
 ### Cómo leer la tabla
 

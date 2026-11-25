@@ -2,6 +2,16 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y [SemVer](https://semver.org/lang/es/).
 
+## [0.4.0] - 2026-11-25
+
+### Añadido
+- **Detección de Lifecycle Scripts sospechosos**: inspección heurística de scripts (`preinstall`, `install`, `postinstall`) para detectar descargas remotas (`curl`, `wget`), ejecución de shells (`powershell`, `cmd.exe`, `bash`), ofuscación o evaluación en memoria (`eval`, `Buffer.from`, `base64`) y acceso a credenciales (`.env`, `.ssh`). Penalización configurable (`suspiciousScripts`, -35 pts) y regla SARIF `GD011`.
+- **Soporte completo para `pnpm-lock.yaml`**: resolución recursiva de dependencias transitivas deduplicadas respetando `--depth` y árbol de procedencia (`via`). Soporta ahora los 3 grandes del ecosistema: `npm`, `yarn` y `pnpm`.
+- **Reporte visual interactivo y autónomo en HTML (`--html` o `-f html`)**: informe web 100% self-contained (cero CDNs externas o dependencias remotas) con filtrado instantáneo por nivel de riesgo, búsqueda reactiva, visualización de scripts de instalación y enlaces de auditoría.
+- **Subcomando de remediación automática (`ghostdeps fix`)**: genera e inyecta `overrides` (npm), `resolutions` (yarn) o `pnpm.overrides` (pnpm) en `package.json` para neutralizar dependencias transitivas vulnerables o críticas. Admite `--dry-run`, `--no-backup` y `--override <pkg=ver>`.
+- **Inspector forense de diferencias entre versiones (`ghostdeps diff <paquete>`)**: comparativa de seguridad entre versiones de un paquete en npm. Alerta si cambió de publicador (`_npmUser`), adición de scripts sospechosos, nuevos mantenedores o cambios abruptos de repositorio. Admite análisis forense asistido por IA (`--ai`).
+- **GitHub Action oficial (`action.yml`)**: permite integrar GhostDeps en flujos de CI/CD de GitHub (`uses: efraindrummer/ghostdeps@v0.4.0`) con soporte nativo para reportes en Markdown en el PR Summary y SARIF para GitHub Code Scanning.
+
 ## [0.3.0] - 2026-11-25
 
 ### Añadido

@@ -40,6 +40,19 @@ export interface MaintainerChange {
   removed: string[];
 }
 
+export interface InstallScript {
+  stage: string;
+  command: string;
+  suspicious: boolean;
+  reason?: string;
+}
+
+export interface InstallScriptSignal {
+  hasInstallScripts: boolean;
+  suspicious: boolean;
+  scripts: InstallScript[];
+}
+
 export interface NpmInfo {
   name: string;
   latestVersion: string | null;
@@ -57,6 +70,8 @@ export interface NpmInfo {
   previousPublishers: string[];
   /** Diferencia de maintainers entre la última versión y la anterior. null = sin datos. */
   maintainersChange: MaintainerChange | null;
+  /** Detección de scripts del ciclo de vida (preinstall, install, postinstall). */
+  installScripts?: InstallScriptSignal;
 }
 
 export interface GitHubInfo {
@@ -90,6 +105,7 @@ export interface HealthSignals {
   repoRedirected: boolean;
   maintainersAdded: string[];
   newPublisher: boolean;
+  installScripts?: InstallScriptSignal;
 }
 
 export type PenaltyId =
@@ -102,7 +118,8 @@ export type PenaltyId =
   | 'repo-redirect'
   | 'maintainers-changed'
   | 'new-publisher'
-  | 'hijack-pattern';
+  | 'hijack-pattern'
+  | 'suspicious-install-scripts';
 
 export interface Penalty {
   id: PenaltyId;

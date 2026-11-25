@@ -1,0 +1,87 @@
+name: 'GhostDeps Supply Chain Security Scanner'
+description: 'Detect abandoned, low bus-factor, or hijacked npm dependencies in your supply chain'
+author: 'efraindrummer'
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  path:
+    description: 'Path to directory containing package.json'
+    required: false
+    default: '.'
+  fail-under:
+    description: 'Exit code 1 if any package score falls below this threshold (0-100)'
+    required: false
+  format:
+    description: 'Output format (table, json, markdown, sarif, html)'
+    required: false
+    default: 'markdown'
+  output:
+    description: 'File path to write the output report'
+    required: false
+  transitive:
+    description: 'Inspect transitive dependencies from lockfile'
+    required: false
+    default: 'true'
+  depth:
+    description: 'Max transitive depth to analyze'
+    required: false
+  dev:
+    description: 'Include devDependencies'
+    required: false
+    default: 'false'
+  ignore:
+    description: 'Comma-separated patterns to ignore (e.g. "@types/*")'
+    required: false
+  github-token:
+    description: 'GitHub token for commit and maintainer API calls'
+    required: false
+    default: ${{ github.token }}
+  ai:
+    description: 'Enable AI cybersecurity advisor recommendations'
+    required: false
+    default: 'false'
+  ai-provider:
+    description: 'AI provider (gemini, anthropic, openai)'
+    required: false
+  ai-model:
+    description: 'Specific AI model to use'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Run GhostDeps Scanner
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FAIL_UNDER: ${{ inputs.fail-under }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+        INPUT_TRANSITIVE: ${{ inputs.transitive }}
+        INPUT_DEPTH: ${{ inputs.depth }}
+        INPUT_DEV: ${{ inputs.dev }}
+        INPUT_IGNORE: ${{ inputs.ignore }}
+        INPUT_AI: ${{ inputs.ai }}
+        INPUT_AI_PROVIDER: ${{ inputs.ai-provider }}
+        INPUT_AI_MODEL: ${{ inputs.ai-model }}
+      run: |
+        ARGS=("-p" "$INPUT_PATH" "-f" "$INPUT_FORMAT")
+        if [ "$INPUT_TRANSITIVE" = "true" ]; then ARGS+=("-t"); fi
+        if [ "$INPUT_DEV" = "true" ]; then ARGS+=("-d"); fi
+        if [ -n "$INPUT_FAIL_UNDER" ]; then ARGS+=("--fail-under" "$INPUT_FAIL_UNDER"); fi
+        if [ -n "$INPUT_DEPTH" ]; then ARGS+=("--depth" "$INPUT_DEPTH"); fi
+        if [ -n "$INPUT_IGNORE" ]; then ARGS+=("-i" "$INPUT_IGNORE"); fi
+        if [ -n "$INPUT_OUTPUT" ]; then ARGS+=("-o" "$INPUT_OUTPUT"); fi
+        if [ "$INPUT_AI" = "true" ]; then ARGS+=("--ai"); fi
+        if [ -n "$INPUT_AI_PROVIDER" ]; then ARGS+=("--ai-provider" "$INPUT_AI_PROVIDER"); fi
+        if [ -n "$INPUT_AI_MODEL" ]; then ARGS+=("--ai-model" "$INPUT_AI_MODEL"); fi
+
+        npx --yes @efraindrummer/ghostdeps@latest "${ARGS[@]}"
