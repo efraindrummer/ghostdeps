@@ -105,13 +105,22 @@ export function parseYarnLock(content: string): YarnLockfile {
 
     if (!trimmed || trimmed.startsWith('#')) continue;
 
-    // Header de nivel superior (ej. "foo@^1.0.0", "foo@^1.2.0":)
+    // Header de nivel superior (ej. "foo@^1.0.0", "foo@^1.2.0": o Yarn Berry "foo@npm:^1.0.0":)
     if (!rawLine.startsWith(' ') && trimmed.endsWith(':')) {
       flush();
       const headerStr = trimmed.slice(0, -1);
-      const parts = headerStr.split(',').map((p) => unquote(p));
-      currentHeaders = parts;
-      const first = parts[0] ?? '';
+      if (headerStr.startsWith('__metadata')) continue;
+
+      const rawParts = headerStr.split(',').map((p) => unquote(p.trim()));
+      const allHeaders: string[] = [];
+      for (const p of rawParts) {
+        allHeaders.push(p);
+        if (p.includes('@npm:')) {
+          allHeaders.push(p.replace(/@npm:/g, '@'));
+        }
+      }
+      currentHeaders = allHeaders;
+      const first = (rawParts[0] ?? '').replace(/@npm:/g, '@');
       const at = first.lastIndexOf('@');
       const name = at > 0 ? first.slice(0, at) : first;
       currentPkg = { name, dependencies: {}, optionalDependencies: {} };
@@ -123,10 +132,10 @@ export function parseYarnLock(content: string): YarnLockfile {
     // Propiedades directas (2 espacios de indentación)
     if (rawLine.startsWith('  ') && !rawLine.startsWith('    ')) {
       section = 'none';
-      if (trimmed.startsWith('version ')) {
-        currentPkg.version = unquote(trimmed.slice(8));
-      } else if (trimmed.startsWith('resolved ')) {
-        currentPkg.resolved = unquote(trimmed.slice(9));
+      if (trimmed.startsWith('version ') || trimmed.startsWith('version:')) {
+        currentPkg.version = unquote(trimmed.replace(/^version:?\s*/, ''));
+      } else if (trimmed.startsWith('resolved ') || trimmed.startsWith('resolved:') || trimmed.startsWith('resolution:')) {
+        currentPkg.resolved = unquote(trimmed.replace(/^(resolved|resolution):?\s*/, ''));
       } else if (trimmed === 'dependencies:') {
         section = 'dependencies';
       } else if (trimmed === 'optionalDependencies:') {
@@ -137,10 +146,25 @@ export function parseYarnLock(content: string): YarnLockfile {
 
     // Sub-claves de dependencias (4 espacios de indentación)
     if (rawLine.startsWith('    ') && (section === 'dependencies' || section === 'optionalDependencies')) {
-      const parts = trimmed.split(/\s+/);
-      if (parts.length >= 2) {
-        const depName = unquote(parts[0] ?? '');
-        const depSpec = unquote(parts.slice(1).join(' '));
+      let depName = '';
+      let depSpec = '';
+
+      if (trimmed.includes(':')) {
+        // Yarn Berry format (name: spec)
+        const colon = trimmed.indexOf(':');
+        depName = unquote(trimmed.slice(0, colon).trim());
+        depSpec = unquote(trimmed.slice(colon + 1).trim());
+        if (depSpec.startsWith('npm:')) depSpec = depSpec.slice(4);
+      } else {
+        // Yarn v1 format (name spec)
+        const parts = trimmed.split(/\s+/);
+        if (parts.length >= 2) {
+          depName = unquote(parts[0] ?? '');
+          depSpec = unquote(parts.slice(1).join(' '));
+        }
+      }
+
+      if (depName && depSpec) {
         if (section === 'dependencies') {
           currentPkg.dependencies![depName] = depSpec;
         } else {
@@ -393,8 +417,13 @@ function resolveYarnTransitive(
 
   const findEntry = (name: string, spec?: string): YarnPackage | undefined => {
     if (spec) {
+      const cleanSpec = spec.startsWith('npm:') ? spec.slice(4) : spec;
       const directKey = `${name}@${spec}`;
       if (entries.has(directKey)) return entries.get(directKey);
+      const cleanKey = `${name}@${cleanSpec}`;
+      if (entries.has(cleanKey)) return entries.get(cleanKey);
+      const berryKey = `${name}@npm:${cleanSpec}`;
+      if (entries.has(berryKey)) return entries.get(berryKey);
     }
     const prefix = `${name}@`;
     for (const [k, v] of entries) {

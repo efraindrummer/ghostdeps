@@ -34,6 +34,10 @@ export interface ScoringWeights {
   hijackPattern: number;
   /** Penalización por scripts de instalación con comandos sospechosos (curl, eval, bash, etc.). */
   suspiciousScripts?: number;
+  /** Penalización por sospecha de typosquatting contra un paquete popular de npm. */
+  typosquatting?: number;
+  /** Penalización por infracción de políticas de licencias permitidas/denegadas. */
+  licenseViolation?: number;
   /** Hueco entre publicaciones que convierte a un publicador nuevo en "resurrección" sospechosa. */
   dormantRevivalDays: number;
 }
@@ -58,6 +62,8 @@ export const DEFAULT_WEIGHTS: ScoringWeights = Object.freeze({
   newPublisher: 15,
   hijackPattern: 15,
   suspiciousScripts: 35,
+  typosquatting: 50,
+  licenseViolation: 30,
   dormantRevivalDays: 365,
 });
 
@@ -81,10 +87,12 @@ export const CATEGORY_LABELS: Record<HealthCategory, string> = {
 
 /** Prioridad para desempatar la alerta principal cuando dos penalizaciones pesan igual. */
 const PRIORITY: readonly PenaltyId[] = [
+  'typosquatting',
   'suspicious-install-scripts',
   'hijack-pattern',
   'archived',
   'deprecated',
+  'license-violation',
   'new-publisher',
   'maintainers-changed',
   'abandoned',
@@ -166,6 +174,24 @@ export function computeScore(
       'suspicious-install-scripts',
       w.suspiciousScripts ?? 35,
       `Script de instalación potencialmente peligroso: ${reasons}`,
+    );
+  }
+
+  // --- Typosquatting / Similitud sospechosa con paquetes populares ---
+  if (s.typosquatting) {
+    add(
+      'typosquatting',
+      w.typosquatting ?? 50,
+      `Posible typosquatting: ${s.typosquatting.similarityReason}`,
+    );
+  }
+
+  // --- Infracción de políticas de licencias ---
+  if (s.licenseDenied) {
+    add(
+      'license-violation',
+      w.licenseViolation ?? 30,
+      s.licenseDeniedReason ?? 'Infracción de política de licencias de software',
     );
   }
 

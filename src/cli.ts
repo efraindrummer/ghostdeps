@@ -15,7 +15,9 @@ import { createIgnoreMatcher, loadConfig } from './config.js';
 import { inspectPackageDiff } from './diff/inspect.js';
 import { GhostDepsError, errorMessage } from './errors.js';
 import { applyFixPlan, createFixPlan, detectPackageManager, generateProposals, type PackageManager } from './fix/remediator.js';
+import { installGitHook } from './hooks/githook.js';
 import { startMcpServer } from './mcp/server.js';
+import { sendWebhookNotification } from './notifications/webhook.js';
 import { readLockfile, resolveTransitive } from './parser/lockfile.js';
 import { readManifest } from './parser/manifest.js';
 import { renderHtml } from './render/html.js';
@@ -81,6 +83,9 @@ interface CliOptions {
   ai: boolean;
   aiProvider?: AiProvider;
   aiModel?: string;
+  allowLicenses: string[];
+  denyLicenses: string[];
+  webhook?: string;
 }
 
 const log = (msg: string) => process.stderr.write(`${msg}\n`);
@@ -165,7 +170,15 @@ async function run(opts: CliOptions, command: Command, version: string): Promise
   const interactive = !quiet && process.stderr.isTTY;
   const reports = await analyzeAll(
     toAnalyze,
-    { npm, github, now, weights: config.weights, thresholds: config.thresholds },
+    {
+      npm,
+      github,
+      now,
+      weights: config.weights,
+      thresholds: config.thresholds,
+      allowedLicenses: opts.allowLicenses.length > 0 ? opts.allowLicenses : config.allowedLicenses,
+      deniedLicenses: opts.denyLicenses.length > 0 ? opts.denyLicenses : config.deniedLicenses,
+    },
     concurrency,
     (done, total, name) => {
       if (interactive) process.stderr.write(`\r\x1b[2K${chalk.gray(`Analizando ${done}/${total}: ${name}`)}`);
@@ -275,6 +288,28 @@ async function run(opts: CliOptions, command: Command, version: string): Promise
     process.stdout.write(`${rendered}\n`);
   }
 
+  // --- Notificación Webhook (Slack / Discord / Genérico) ---
+  const webhookUrl = opts.webhook || config.webhook;
+  if (webhookUrl) {
+    const critList = sorted
+      .filter((r) => r.result && r.result.category === 'critical')
+      .map((r) => ({
+        name: r.name,
+        score: r.result!.score,
+        mainAlert: r.result!.mainAlert?.message,
+      }));
+    const sent = await sendWebhookNotification({
+      webhookUrl,
+      projectName: manifest.projectName,
+      version,
+      summary,
+      criticalPackages: critList,
+      failUnder,
+      failingCount: failing.length,
+    });
+    if (!quiet && sent) log(chalk.green('✔ Notificación de alertas enviada al Webhook.'));
+  }
+
   if (gate.resetAt && gate.resetAt.getTime() > Date.now() && summary.errors > 0) {
     log(
       chalk.red(
@@ -328,6 +363,9 @@ async function main(): Promise<void> {
     )
     .option('--ai-model <model>', 'modelo específico de IA a consultar')
     .option('--mcp', 'iniciar servidor MCP (Model Context Protocol) sobre stdio para agentes de IA', false)
+    .option('--allow-licenses <lics>', 'lista de licencias permitidas separadas por coma', collectList, [])
+    .option('--deny-licenses <lics>', 'lista de licencias denegadas separadas por coma (ej. GPL-3.0,AGPL-3.0)', collectList, [])
+    .option('--webhook <url>', 'URL de Webhook (Slack, Discord o HTTP genérico) para enviar resumen de alertas')
     .addHelpText(
       'after',
       [
@@ -335,12 +373,16 @@ async function main(): Promise<void> {
         'Subcomandos:',
         '  ghostdeps fix                Inyecta overrides/resolutions en package.json para corregir dependencias críticas',
         '  ghostdeps diff <paquete>     Compara dos versiones de un paquete en npm para detectar secuestros o scripts maliciosos',
+        '  ghostdeps hook               Instala un pre-commit hook (Husky o Git nativo) para validar calidad antes de commit',
         '',
         'Ejemplos:',
         '  ghostdeps --transitive --format html -o reporte.html',
         '  ghostdeps --dev --explain',
         '  ghostdeps fix --dry-run',
+        '  ghostdeps hook --fail-under 50',
         '  ghostdeps diff event-stream --from 3.3.5 --to 3.3.6',
+        '  ghostdeps --webhook https://hooks.slack.com/services/...',
+        '  ghostdeps --deny-licenses "GPL-3.0,AGPL-3.0"',
         '  ghostdeps --ai',
         '  ghostdeps --mcp',
         '',
@@ -535,6 +577,32 @@ async function main(): Promise<void> {
         process.exitCode = report.riskLevel === 'critical' ? EXIT.FAIL_UNDER : EXIT.OK;
       } catch (err) {
         log(chalk.red(`\n✖ Error inspeccionando diff: ${(err as Error).message}`));
+        process.exitCode = EXIT.FATAL;
+      }
+    });
+
+  // --- Subcomando: ghostdeps hook ---
+  program
+    .command('hook')
+    .description('Instala un pre-commit hook de Git o Husky para auditar dependencias automáticamente antes de cada commit.')
+    .option('-p, --path <dir>', 'directorio del repositorio git', process.cwd())
+    .option('--fail-under <score>', 'score mínimo requerido para permitir el commit', scoreArg, 50)
+    .option('--dry-run', 'muestra el contenido del hook sin escribirlo a disco', false)
+    .action(async (cmdOpts: { path: string; failUnder: number; dryRun: boolean }) => {
+      try {
+        const res = await installGitHook(cmdOpts.path, { failUnder: cmdOpts.failUnder, dryRun: cmdOpts.dryRun });
+        if (cmdOpts.dryRun) {
+          log(chalk.cyan(`\n[Modo --dry-run] Pre-commit hook para ${res.type} (${res.hookPath}):\n`));
+          log(res.content);
+          process.exitCode = EXIT.OK;
+          return;
+        }
+        log(chalk.green(`\n✔ Git pre-commit hook (${res.type}) instalado correctamente en:`));
+        log(chalk.gray(`  ${res.hookPath}`));
+        log(chalk.cyan(`\nAhora tus commits se cancelarán si alguna dependencia evaluada tiene score < ${cmdOpts.failUnder}.`));
+        process.exitCode = EXIT.OK;
+      } catch (err) {
+        log(chalk.red(`\n✖ Error instalando git hook: ${(err as Error).message}`));
         process.exitCode = EXIT.FATAL;
       }
     });

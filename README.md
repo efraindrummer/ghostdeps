@@ -9,7 +9,7 @@
 Los escáneres de vulnerabilidades te avisan cuando ya existe un CVE. GhostDeps intenta avisarte **antes**: cuando una dependencia lleva años sin commits, depende de una sola persona, está archivada/deprecated o cambió de manos de forma sospechosa (el patrón de `event-stream`, `ua-parser-js` o `xz`).
 
 ```
-👻 GhostDeps v0.3.0 · mi-app
+👻 GhostDeps v0.5.0 · mi-app
 ┌─────────────────────────────┬───────┬──────────────────┬───────────────┬──────────────────────────────────────────────┐
 │ Paquete                     │ Score │ Días últ. commit │ Mant. activos │ Alerta principal                             │
 ├─────────────────────────────┼───────┼──────────────────┼───────────────┼──────────────────────────────────────────────┤
@@ -131,6 +131,9 @@ ghostdeps --version
 | `--ai-provider <prov>` | Proveedor de IA: `gemini`, `anthropic` u `openai` | autodetección |
 | `--ai-model <model>` | Modelo específico de IA a consultar | por defecto del proveedor |
 | `--mcp` | Inicia el servidor MCP (Model Context Protocol) sobre stdio | `false` |
+| `--allow-licenses <lics>` | Lista blanca de licencias permitidas separadas por coma | sin filtro |
+| `--deny-licenses <lics>` | Lista negra de licencias denegadas (ej. `GPL-3.0,AGPL-3.0`) | sin filtro |
+| `--webhook <url>` | URL de Webhook (Slack, Discord o HTTP) para enviar alertas | — |
 | `--no-cache` | No lee ni escribe la caché en disco | caché activa |
 | `--cache-ttl <horas>` | TTL de la caché | `24` |
 | `--timeout <ms>` | Timeout por petición | `15000` |
@@ -215,7 +218,7 @@ Cómo funciona:
 - Reproduce la resolución de Node (`node_modules` anidados y *hoisting*) sobre el lockfile y recorre el grafo en anchura.
 - Cada paquete se analiza **una sola vez** aunque aparezca varias veces en el árbol (se deduplica por nombre).
 - Los paquetes instalados desde git o `file:` se marcan como *No evaluable*; los *workspaces* (`link: true`) no se recorren.
-- Soporta `package-lock.json` (npm ≥ 7 v2/v3), `yarn.lock` (Yarn v1) y `pnpm-lock.yaml` (pnpm v5/v6/v9).
+- Soporta `package-lock.json` (npm ≥ 7 v2/v3), `yarn.lock` (Yarn v1 y Yarn Berry v2/v3/v4) y `pnpm-lock.yaml` (pnpm v5/v6/v9).
 
 > [!TIP]
 > Un árbol típico tiene cientos de paquetes (~3 peticiones a GitHub cada uno). Usa **siempre** `GITHUB_TOKEN`, y combina `--depth` e `ignore` para acotar. La caché hace que las ejecuciones siguientes sean casi instantáneas.
@@ -418,6 +421,8 @@ Reglas SARIF incluidas:
 - `GD009`: Patrón combinado de secuestro/hijacking (`error`)
 - `GD010`: Publicación desactualizada en npm (`note`)
 - `GD011`: Script de ciclo de vida de instalación potencialmente peligroso (`error`)
+- `GD012`: Posible intento de typosquatting o suplantación de paquete popular (`error`)
+- `GD013`: Infracción de compliance legal o política de licencias permitidas/denegadas (`warning`)
 
 #### Reporte Visual Autónomo en HTML (`--html`)
 
@@ -493,12 +498,48 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run GhostDeps Audit
-        uses: efraindrummer/ghostdeps@v0.4.0
+        uses: efraindrummer/ghostdeps@v0.5.0
         with:
           fail-under: '60'
           transitive: 'true'
           format: 'markdown'
           github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Git Pre-commit Hook (`ghostdeps hook`)
+
+Instala un guardia de seguridad local en tu repositorio para que ningún desarrollador cometa por error código con dependencias críticas o vulnerables:
+
+```bash
+# Instala automáticamente en .husky/pre-commit o .git/hooks/pre-commit
+ghostdeps hook --fail-under 50
+
+# Ver el script que se instalaría sin tocar el disco
+ghostdeps hook --dry-run
+```
+
+### Auditoría y Compliance de Licencias (`--allow-licenses` / `--deny-licenses`)
+
+Verifica que ninguna dependencia introduzca licencias *copyleft* infecciosas (GPL/AGPL) o licencias no autorizadas en tu proyecto:
+
+```bash
+# Prohibir licencias restrictivas
+ghostdeps --deny-licenses "GPL-3.0,AGPL-3.0"
+
+# O requerir únicamente licencias de lista blanca
+ghostdeps --allow-licenses "MIT,Apache-2.0,ISC,BSD-3-Clause"
+```
+
+### Notificaciones a Slack, Discord y Webhooks (`--webhook`)
+
+Envía un resumen ejecutivo del escaneo a tu canal de seguridad o alertas en CI/CD:
+
+```bash
+# Notificar a Slack (Block Kit nativo)
+ghostdeps --webhook https://hooks.slack.com/services/T00/B00/XXXX
+
+# Notificar a Discord (Embeds nativo)
+ghostdeps --webhook https://discord.com/api/webhooks/123/xyz
 ```
 
 ### Cómo leer la tabla

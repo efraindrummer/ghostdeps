@@ -21,11 +21,27 @@ export interface GhostDepsConfig {
   concurrency?: number;
   weights: ScoringWeights;
   thresholds: Thresholds;
+  allowedLicenses?: string[];
+  deniedLicenses?: string[];
+  webhook?: string;
 }
 
 export const CONFIG_FILES = ['.ghostdepsrc.json', '.ghostdepsrc'] as const;
 
-const TOP_LEVEL_KEYS = ['$schema', 'ignore', 'failUnder', 'dev', 'transitive', 'depth', 'concurrency', 'weights', 'thresholds'];
+const TOP_LEVEL_KEYS = [
+  '$schema',
+  'ignore',
+  'failUnder',
+  'dev',
+  'transitive',
+  'depth',
+  'concurrency',
+  'weights',
+  'thresholds',
+  'allowedLicenses',
+  'deniedLicenses',
+  'webhook',
+];
 const NUMERIC_WEIGHTS = [
   'archived',
   'deprecated',
@@ -34,6 +50,9 @@ const NUMERIC_WEIGHTS = [
   'newPublisher',
   'hijackPattern',
   'dormantRevivalDays',
+  'suspiciousScripts',
+  'typosquatting',
+  'licenseViolation',
 ] as const;
 const TIER_WEIGHTS = ['abandonment', 'unansweredIssues'] as const;
 const WEIGHT_KEYS = [...NUMERIC_WEIGHTS, ...TIER_WEIGHTS, 'stalePublish', 'busFactor'];
@@ -147,6 +166,25 @@ export function parseConfig(raw: unknown, source: string): GhostDepsConfig {
   if (raw.transitive !== undefined) config.transitive = bool(raw.transitive, 'transitive', source);
   if (raw.depth !== undefined) config.depth = num(raw.depth, 'depth', source, 1, 100, true);
   if (raw.concurrency !== undefined) config.concurrency = num(raw.concurrency, 'concurrency', source, 1, 32, true);
+
+  if (raw.allowedLicenses !== undefined) {
+    if (!Array.isArray(raw.allowedLicenses) || raw.allowedLicenses.some((l) => typeof l !== 'string')) {
+      throw new ConfigError(`${source}: "allowedLicenses" debe ser un array de licencias (ej. ["MIT", "Apache-2.0"]).`);
+    }
+    config.allowedLicenses = (raw.allowedLicenses as string[]).map((l) => l.trim());
+  }
+  if (raw.deniedLicenses !== undefined) {
+    if (!Array.isArray(raw.deniedLicenses) || raw.deniedLicenses.some((l) => typeof l !== 'string')) {
+      throw new ConfigError(`${source}: "deniedLicenses" debe ser un array de licencias (ej. ["GPL-3.0"]).`);
+    }
+    config.deniedLicenses = (raw.deniedLicenses as string[]).map((l) => l.trim());
+  }
+  if (raw.webhook !== undefined) {
+    if (typeof raw.webhook !== 'string' || !raw.webhook.trim()) {
+      throw new ConfigError(`${source}: "webhook" debe ser una URL válida.`);
+    }
+    config.webhook = raw.webhook.trim();
+  }
   return config;
 }
 

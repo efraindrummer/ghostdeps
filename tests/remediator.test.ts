@@ -30,6 +30,8 @@ describe('generateProposals', () => {
           previousPublishers: [],
           maintainersChange: null,
           installScripts: { hasInstallScripts: false, suspicious: false, scripts: [] },
+          hasProvenance: false,
+          license: 'MIT',
         },
         github: null,
         signals: null,

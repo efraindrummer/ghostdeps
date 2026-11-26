@@ -2,6 +2,16 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y [SemVer](https://semver.org/lang/es/).
 
+## [0.5.0] - 2026-11-26
+
+### Añadido
+- **Detección de Typosquatting y Confusión de Nombres**: Detección heurística mediante distancia de Levenshtein y normalización de separadores contra los top paquetes de npm. Alerta sobre suplantaciones visuales y ataques dirigidos (ej. `crossenv` vs `cross-env`, `cha1k` vs `chalk`). Penalización configurable (-50 pts) y regla SARIF `GD012`.
+- **Verificación de npm Build Provenance**: Detección de firmas criptográficas y atestaciones SLSA (Sigstore) generadas en CI oficial (GitHub Actions).
+- **Auditoría de Licencias y Compliance Legal (`--allow-licenses`, `--deny-licenses`)**: Detección de licencias copyleft restrictivas (GPL, AGPL) y validación de listas de licencias permitidas o denegadas. Emite alerta y regla SARIF `GD013`.
+- **Notificaciones Webhook para Slack, Discord y APIs (`--webhook`)**: Envío automático de alertas y resúmenes ejecutivos con formato nativo para Slack (Block Kit) y Discord (Embeds).
+- **Generador de Git Pre-commit Hooks (`ghostdeps hook`)**: Comando de instalación automática de hooks para `.husky` o `.git/hooks/pre-commit` con quality gate configurable (`--fail-under`).
+- **Soporte completo para Yarn Berry (v2, v3, v4)**: Compatibilidad con el nuevo formato YAML de `yarn.lock`, descriptores `@npm:` y resolución transitiva moderna.
+
 ## [0.4.0] - 2026-11-25
 
 ### Añadido

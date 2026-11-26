@@ -12,6 +12,8 @@ export interface AnalyzerDeps {
   now: Date;
   weights?: ScoringWeights;
   thresholds?: Thresholds;
+  allowedLicenses?: string[];
+  deniedLicenses?: string[];
 }
 
 const HOST_LABEL: Record<string, string> = { gitlab: 'GitLab', bitbucket: 'Bitbucket' };
@@ -63,7 +65,10 @@ export async function analyzePackage(dep: DependencySpec, deps: AnalyzerDeps): P
     return failed(err);
   }
 
-  report.signals = buildSignals(report.npm, report.github, deps.now);
+  report.signals = buildSignals(report.npm, report.github, deps.now, {
+    allowedLicenses: deps.allowedLicenses,
+    deniedLicenses: deps.deniedLicenses,
+  });
   report.result = computeScore(report.signals, deps.weights ?? DEFAULT_WEIGHTS, deps.thresholds ?? THRESHOLDS);
   return report;
 }

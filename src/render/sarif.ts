@@ -85,6 +85,18 @@ export const SARIF_RULES: Record<PenaltyId, SarifRule> = {
     shortDescription: { text: 'Script de ciclo de vida de instalación potencialmente peligroso (pre/install/postinstall)' },
     defaultConfiguration: { level: 'error' },
   },
+  'typosquatting': {
+    id: 'GD012',
+    name: 'TyposquattingSuspect',
+    shortDescription: { text: 'Posible intento de typosquatting o suplantación de paquete popular' },
+    defaultConfiguration: { level: 'error' },
+  },
+  'license-violation': {
+    id: 'GD013',
+    name: 'LicenseComplianceViolation',
+    shortDescription: { text: 'Infracción de política de licencias permitidas/denegadas o licencia copyleft' },
+    defaultConfiguration: { level: 'warning' },
+  },
 };
 
 export interface SarifOptions {

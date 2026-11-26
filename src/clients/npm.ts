@@ -53,6 +53,12 @@ interface NpmVersionDoc {
   maintainers?: NpmPerson[] | NpmPerson | string;
   _npmUser?: NpmPerson | string;
   scripts?: Record<string, unknown>;
+  license?: unknown;
+  dist?: {
+    attestations?: unknown;
+    signatures?: unknown[];
+    tarball?: string;
+  };
 }
 
 export interface NpmPackument {
@@ -63,6 +69,7 @@ export interface NpmPackument {
   maintainers?: NpmPerson[];
   repository?: unknown;
   homepage?: string;
+  license?: unknown;
 }
 
 function personName(p: NpmPerson | string | undefined): string | null {
@@ -154,6 +161,20 @@ export function extractNpmInfo(name: string, doc: NpmPackument): NpmInfo {
         ? 'deprecated'
         : null;
 
+  let license: string | null = null;
+  const rawLic = latestDoc?.license ?? doc.license;
+  if (typeof rawLic === 'string' && rawLic.trim()) {
+    license = rawLic.trim();
+  } else if (rawLic && typeof rawLic === 'object' && 'type' in rawLic) {
+    const t = (rawLic as { type?: unknown }).type;
+    if (typeof t === 'string' && t.trim()) license = t.trim();
+  }
+
+  const hasProvenance = Boolean(
+    latestDoc?.dist?.attestations ||
+      (Array.isArray(latestDoc?.dist?.signatures) && latestDoc.dist.signatures.length > 0),
+  );
+
   return {
     name: doc.name ?? name,
     latestVersion,
@@ -167,6 +188,8 @@ export function extractNpmInfo(name: string, doc: NpmPackument): NpmInfo {
     previousPublishers,
     maintainersChange,
     installScripts: inspectInstallScripts(latestDoc?.scripts as Record<string, unknown> | undefined),
+    hasProvenance,
+    license,
   };
 }
 

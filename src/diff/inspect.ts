@@ -273,20 +273,20 @@ export async function inspectPackageDiff(
     const aiConfig = detectAiConfig(options.aiOptions);
     if (aiConfig) {
       const prompt = `Actúa como analista de seguridad de software y malware en npm.
-Analiza la siguiente diferencia entre dos versiones del paquete "${report.packageName}":
-- Versión base: ${report.fromVersion}
-- Versión nueva: ${report.toVersion}
-- Publicador anterior: ${report.publisher.from ?? 'N/A'}
-- Publicador nuevo: ${report.publisher.to ?? 'N/A'} (¿Cambió?: ${report.publisher.changed ? 'SÍ' : 'NO'})
-- Scripts de ciclo de vida añadidos/modificados: ${JSON.stringify(report.installScripts, null, 2)}
-- Dependencias añadidas: ${JSON.stringify(report.dependencies.added, null, 2)}
-- Repositorio alterado: ${report.repository.changed ? 'SÍ' : 'NO'}
-- Alertas automáticas: ${report.alerts.join('; ')}
+                      Analiza la siguiente diferencia entre dos versiones del paquete "${report.packageName}":
+                      - Versión base: ${report.fromVersion}
+                      - Versión nueva: ${report.toVersion}
+                      - Publicador anterior: ${report.publisher.from ?? 'N/A'}
+                      - Publicador nuevo: ${report.publisher.to ?? 'N/A'} (¿Cambió?: ${report.publisher.changed ? 'SÍ' : 'NO'})
+                      - Scripts de ciclo de vida añadidos/modificados: ${JSON.stringify(report.installScripts, null, 2)}
+                      - Dependencias añadidas: ${JSON.stringify(report.dependencies.added, null, 2)}
+                      - Repositorio alterado: ${report.repository.changed ? 'SÍ' : 'NO'}
+                      - Alertas automáticas: ${report.alerts.join('; ')}
 
-Emite un diagnóstico forense conciso (máximo 3 párrafos en español):
-1. ¿Presenta indicios de toma de control de cuenta (account hijacking) o inyección maliciosa?
-2. ¿Qué riesgos específicos conllevan los cambios observados?
-3. Recomendación explícita: Aceptar actualización, bloquear en lockfile con override, o reportar a npm security.`;
+                      Emite un diagnóstico forense conciso (máximo 3 párrafos en español):
+                      1. ¿Presenta indicios de toma de control de cuenta (account hijacking) o inyección maliciosa?
+                      2. ¿Qué riesgos específicos conllevan los cambios observados?
+                      3. Recomendación explícita: Aceptar actualización, bloquear en lockfile con override, o reportar a npm security.`;
 
       try {
         let aiText: string;

@@ -72,6 +72,10 @@ export interface NpmInfo {
   maintainersChange: MaintainerChange | null;
   /** Detección de scripts del ciclo de vida (preinstall, install, postinstall). */
   installScripts?: InstallScriptSignal;
+  /** Si la versión fue firmada con npm build provenance (Sigstore / GitHub Actions). */
+  hasProvenance: boolean;
+  /** Licencia declarada (ej. MIT, Apache-2.0, GPL-3.0). */
+  license: string | null;
 }
 
 export interface GitHubInfo {
@@ -106,6 +110,15 @@ export interface HealthSignals {
   maintainersAdded: string[];
   newPublisher: boolean;
   installScripts?: InstallScriptSignal;
+  /** Coincidencia de posible typosquatting / confusión de nombres. */
+  typosquatting?: { suspectName: string; targetPackage: string; similarityReason: string } | null;
+  /** Si el paquete tiene build provenance verificada de npm. */
+  hasProvenance?: boolean;
+  /** Licencia del paquete. */
+  license?: string | null;
+  /** Si la licencia infringe las políticas permitidas/denegadas del proyecto. */
+  licenseDenied?: boolean;
+  licenseDeniedReason?: string;
 }
 
 export type PenaltyId =
@@ -119,7 +132,9 @@ export type PenaltyId =
   | 'maintainers-changed'
   | 'new-publisher'
   | 'hijack-pattern'
-  | 'suspicious-install-scripts';
+  | 'suspicious-install-scripts'
+  | 'typosquatting'
+  | 'license-violation';
 
 export interface Penalty {
   id: PenaltyId;
